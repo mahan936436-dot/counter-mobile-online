@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Strike Mobile - Online FPS</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#10151b;color:#fff;font-family:Tahoma,Arial,sans-serif;touch-action:none}
+#game{position:fixed;inset:0}canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;inset:0;pointer-events:none;text-shadow:0 2px 3px #000}
+.panel{background:#07111bd9;border:1px solid #ffffff35;border-radius:10px;padding:8px 11px}
+#top{position:absolute;top:env(safe-area-inset-top,8px);left:8px;right:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:13px}
+#status{max-width:60%;line-height:1.7}
+#stats{line-height:1.8;text-align:left;direction:ltr}
+#crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:26px;font-weight:bold;color:#fff}
+#message{position:absolute;left:50%;top:18%;transform:translateX(-50%);background:#06101bdc;border-radius:10px;padding:9px 14px;font-size:14px;text-align:center;max-width:90%}
+#bottom{position:absolute;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);left:12px;right:12px;display:flex;justify-content:space-between;align-items:end}
+#stickArea{width:124px;height:124px;position:relative;pointer-events:auto;border-radius:50%;background:#ffffff14;border:2px solid #ffffff55}
+#stick{position:absolute;left:50%;top:50%;width:48px;height:48px;transform:translate(-50%,-50%);border-radius:50%;background:#d9e7f1aa;border:2px solid white}
+.controls{display:flex;gap:10px;align-items:end;pointer-events:auto}
+.ctrl{width:64px;height:64px;border-radius:50%;border:2px solid #ffffffaa;background:#172b3dcc;color:#fff;font-weight:bold;font-size:13px;touch-action:none}
+#fire{width:78px;height:78px;background:#b52e2ecc;border-color:#ffb0a5;font-size:16px}
+#reload{background:#8b6b20dd}
+#menu{position:fixed;inset:0;background:#08111eef;display:flex;align-items:center;justify-content:center;padding:18px;z-index:5}
+#card{width:min(440px,100%);background:#172431;border:1px solid #ffffff35;border-radius:16px;padding:22px;box-shadow:0 15px 50px #0008}
+h1{font-size:24px;margin:0 0 8px}p{line-height:1.8;color:#d6e0e9;font-size:13px}
+input{width:100%;padding:12px;margin:6px 0;background:#0b151e;color:white;border:1px solid #718393;border-radius:8px;font-size:16px}
+#join{width:100%;padding:13px;background:#17844b;color:white;border:0;border-radius:9px;font-weight:bold;font-size:16px;margin-top:8px}
+#hint{font-size:12px;color:#bac9d5}
+@media(min-width:800px){#stickArea{width:145px;height:145px}#bottom{bottom:20px}}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="hud">
+  <div id="top">
+    <div id="status" class="panel">وضعیت: آماده ورود<br>بازیکنان: 0</div>
+    <div id="stats" class="panel">HP <span id="hp">100</span><br>AMMO <span id="ammo">30</span>/90<br>KILLS <span id="kills">0</span></div>
+  </div>
+  <div id="crosshair">+</div>
+  <div id="message">برای شروع وارد اتاق آنلاین شو</div>
+  <div id="bottom">
+    <div id="stickArea"><div id="stick"></div></div>
+    <div class="controls">
+      <button id="reload" class="ctrl">خشاب</button>
+      <button id="fire" class="ctrl">شلیک</button>
+    </div>
+  </div>
+</div>
+<div id="menu">
+ <div id="card">
+  <h1>STRIKE MOBILE</h1>
+  <p>دموی تیراندازی اول‌شخص سه‌بعدی آنلاین با کنترل لمسی. برای بازی با دوستت، هر دو باید همین صفحه را باز کنید و آدرس یک سرور عمومی را وارد کنید.</p>
+  <input id="name" maxlength="16" placeholder="نام بازیکن" value="Player">
+  <input id="server" placeholder="آدرس سرور، مثال: https://your-app.example.com">
+  <button id="join">ورود به اتاق آنلاین</button>
+  <p id="hint">برای آزمایش روی همان رایانه می‌توانی آدرس http://localhost:3000 را وارد کنی. برای اینترنت واقعی، سرور باید روی میزبان عمومی با HTTPS اجرا شود.</p>
+ </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+(() => {
+const game = document.getElementById('game'), statusEl=document.getElementById('status');
+const msg=document.getElementById('message'), hpEl=document.getElementById('hp'), ammoEl=document.getElementById('ammo'), killsEl=document.getElementById('kills');
+let scene,camera,renderer,clock, socket=null, myId=null, joined=false;
+let yaw=0,pitch=0,hp=100,ammo=30,reserve=90,kills=0,lastShot=0,reloading=false;
+const players=new Map(), keys={forward:0,right:0}, remoteMeshes=new Map();
+const colliders=[];
+const mat=(color,roughness=0.9)=>new THREE.MeshStandardMaterial({color,roughness});
+function init3D(){
+ scene=new THREE.Scene(); scene.background=new THREE.Color(0x91a7b8); scene.fog=new THREE.Fog(0x91a7b8,28,95);
+ camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.1,150); camera.position.set(0,1.7,8);
+ renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'high-performance'}); renderer.setPixelRatio(Math.min(devicePixelRatio,1.5)); renderer.setSize(innerWidth,innerHeight); renderer.shadowMap.enabled=false; game.appendChild(renderer.domElement);
+ clock=new THREE.Clock();
+ scene.add(new THREE.HemisphereLight(0xddeeff,0x5c594c,2));
+ const sun=new THREE.DirectionalLight(0xffffff,2.2); sun.position.set(8,16,6); scene.add(sun);
+ const floor=new THREE.Mesh(new THREE.PlaneGeometry(100,100),mat(0x77786b)); floor.rotation.x=-Math.PI/2; floor.position.y=0; scene.add(floor);
+ // Dusty courtyard and simple cover structures
+ const wallMat=mat(0xc1ae8d), crateMat=mat(0x70513b), concrete=mat(0x747b7b);
+ function box(x,y,z,sx,sy,sz,m,solid=true){const o=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),m);o.position.set(x,y,z);scene.add(o);if(solid)colliders.push({x,z,hx:sx/2,hz:sz/2,sy});return o;}
+ // outer walls
+ box(0,2,-22,44,4,1,wallMat);box(0,2,22,44,4,1,wallMat);box(-22,2,0,1,4,44,wallMat);box(22,2,0,1,4,44,wallMat);
+ box(-8,1,0,4,2,4,crateMat);box(8,1,-5,4,2,3,crateMat);box(0,1,-10,6,2,2,concrete);box(11,1,8,3,2,5,crateMat);box(-12,1,10,5,2,3,concrete);box(0,1,8,3,2,3,crateMat);
+ // stylized rifle model attached to camera
+ const gun=new THREE.Group();
+ const body=new THREE.Mesh(new THREE.BoxGeometry(.22,.18,.65),mat(0x222a2e));body.position.set(.35,-.28,-.55);gun.add(body);
+ const barrel=new THREE.Mesh(new THREE.CylinderGeometry(.035,.035,.48,8),mat(0x101416));barrel.rotation.x=Math.PI/2;barrel.position.set(.35,-.25,-.99);gun.add(barrel);
+ const stock=new THREE.Mesh(new THREE.BoxGeometry(.12,.13,.28),mat(0x76533b));stock.position.set(.35,-.31,-.2);gun.add(stock);
+ camera.add(gun);scene.add(camera);
+ addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+ animate();
+}
+function makeRemote(id,p){
+ const g=new THREE.Group();
+ const body=new THREE.Mesh(new THREE.CapsuleGeometry(.38,.65,4,8),mat(p.color||0x2387c9));body.position.y=.85;g.add(body);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.23,10,8),mat(0xd4ad8d));head.position.y=1.55;g.add(head);
+ const gun=new THREE.Mesh(new THREE.BoxGeometry(.12,.12,.65),mat(0x222222));gun.position.set(.25,1.05,-.28);g.add(gun);
+ scene.add(g);remoteMeshes.set(id,g);return g;
+}
+function say(t){msg.textContent=t;msg.style.display='block';clearTimeout(say.timer);say.timer=setTimeout(()=>msg.style.display='none',2300)}
+function updateStatus(){statusEl.innerHTML='وضعیت: '+(joined?'متصل به سرور':'آفلاین')+'<br>بازیکنان: '+players.size;}
+function joinServer(){
+ const server=document.getElementById('server').value.trim() || location.origin;
+ const name=(document.getElementById('name').value.trim()||'Player').slice(0,16);
+ if(!window.io){say('کتابخانه آنلاین بارگذاری نشد؛ اینترنت را بررسی کن.');return}
+ try{socket=io(server,{transports:['websocket','polling'],timeout:8000});}catch(e){say('آدرس سرور معتبر نیست');return}
+ socket.on('connect',()=>{myId=socket.id;joined=true;document.getElementById('menu').style.display='none';say('به اتاق آنلاین خوش آمدی!');socket.emit('joinGame',{name});updateStatus();});
+ socket.on('connect_error',()=>say('اتصال ناموفق؛ آدرس سرور و اجرای سرور را بررسی کن.'));
+ socket.on('disconnect',()=>{joined=false;updateStatus();say('اتصال به سرور قطع شد');});
+ socket.on('state',state=>{
+   for(const [id,p] of Object.entries(state)){
+     if(id===myId)continue;
+     players.set(id,p);
+     let g=remoteMeshes.get(id);if(!g)g=makeRemote(id,p);
+     g.position.set(p.x,0,p.z);g.rotation.y=p.yaw||0;
+   }
+   for(const id of [...remoteMeshes.keys()])if(!state[id]){scene.remove(remoteMeshes.get(id));remoteMeshes.delete(id);players.delete(id);}
+   updateStatus();
+ });
+ socket.on('hit',data=>{if(data.target===myId){hp=Math.max(0,hp-data.damage);hpEl.textContent=hp;if(hp<=0){say('حذف شدی! در حال بازگشت...');setTimeout(()=>{hp=100;hpEl.textContent=hp;camera.position.set(0,1.7,8)},1500)}}});
+ socket.on('kill',data=>{if(data.killer===myId){kills++;killsEl.textContent=kills;say('حذف دشمن!')}})
+ socket.on('notice',t=>say(t));
+}
+function tryMove(dt){
+ const speed=5.2, f=keys.forward, r=keys.right;
+ const dx=(Math.sin(yaw)*f + Math.cos(yaw)*r)*speed*dt;
+ const dz=(-Math.cos(yaw)*f + Math.sin(yaw)*r)*speed*dt;
+ let nx=camera.position.x+dx,nz=camera.position.z+dz;
+ nx=Math.max(-20,Math.min(20,nx));nz=Math.max(-20,Math.min(20,nz));
+ for(const c of colliders){if(Math.abs(nx-c.x)<c.hx+.35&&Math.abs(nz-c.z)<c.hz+.35){nx=camera.position.x;nz=camera.position.z;break;}}
+ camera.position.x=nx;camera.position.z=nz;
+ if(socket&&joined)socket.emit('move',{x:nx,z:nz,yaw});
+}
+function shoot(){
+ const now=performance.now();if(!joined){say('اول به سرور وصل شو');return}if(now-lastShot<170||reloading)return;lastShot=now;
+ if(ammo<=0){say('خشاب خالی است');return}
+ ammo--;ammoEl.textContent=ammo;
+ // Client-side aim direction; server checks target distance and cooldown in this prototype.
+ socket.emit('shoot',{x:camera.position.x,yaw,z:camera.position.z,pitch});
+ // small visual kick
+ camera.rotation.set(pitch,yaw,0,'YXZ');
+}
+function reload(){if(reloading||ammo===30||reserve<=0)return;reloading=true;say('در حال تعویض خشاب...');setTimeout(()=>{const n=Math.min(30-ammo,reserve);ammo+=n;reserve-=n;ammoEl.textContent=ammo;reloading=false},1200)}
+// Left virtual joystick
+const area=document.getElementById('stickArea'),stick=document.getElementById('stick');let stickPid=null,center={x:0,y:0};
+area.addEventListener('pointerdown',e=>{stickPid=e.pointerId;area.setPointerCapture(stickPid);const r=area.getBoundingClientRect();center={x:r.left+r.width/2,y:r.top+r.height/2};moveStick(e)});
+area.addEventListener('pointermove',e=>{if(e.pointerId===stickPid)moveStick(e)});
+function moveStick(e){const dx=e.clientX-center.x,dy=e.clientY-center.y,lim=38,len=Math.hypot(dx,dy)||1,s=Math.min(1,lim/len),x=dx*s,y=dy*s;stick.style.left=`calc(50% + ${x}px)`;stick.style.top=`calc(50% + ${y}px)`;keys.right=x/lim;keys.forward=-y/lim;}
+function resetStick(){stickPid=null;keys.forward=keys.right=0;stick.style.left='50%';stick.style.top='50%'}
+area.addEventListener('pointerup',resetStick);area.addEventListener('pointercancel',resetStick);
+// Swipe on the central/right side to turn and aim.
+let lookPid=null,lastLook={x:0,y:0};
+rendererlessLookSetup();
+function rendererlessLookSetup(){
+ document.addEventListener('pointerdown',e=>{if(e.target.closest('button')||e.target.closest('#stickArea')||document.getElementById('menu').style.display!=='none')return;lookPid=e.pointerId;lastLook={x:e.clientX,y:e.clientY};});
+ document.addEventListener('pointermove',e=>{if(e.pointerId!==lookPid)return;const dx=e.clientX-lastLook.x,dy=e.clientY-lastLook.y;lastLook={x:e.clientX,y:e.clientY};yaw-=dx*.004;pitch-=dy*.004;pitch=Math.max(-1.25,Math.min(1.25,pitch));camera.rotation.order='YXZ';camera.rotation.set(pitch,yaw,0);});
+ document.addEventListener('pointerup',e=>{if(e.pointerId===lookPid)lookPid=null});
+}
+document.getElementById('fire').addEventListener('pointerdown',e=>{e.preventDefault();shoot()});
+document.getElementById('reload').addEventListener('click',reload);
+document.getElementById('join').addEventListener('click',joinServer);
+document.addEventListener('keydown',e=>{if(e.code==='KeyW')keys.forward=1;if(e.code==='KeyS')keys.forward=-1;if(e.code==='KeyA')keys.right=-1;if(e.code==='KeyD')keys.right=1;if(e.code==='Space')shoot();if(e.code==='KeyR')reload()});
+document.addEventListener('keyup',e=>{if(['KeyW','KeyS'].includes(e.code))keys.forward=0;if(['KeyA','KeyD'].includes(e.code))keys.right=0});
+function animate(){requestAnimationFrame(animate);if(!scene)return;const dt=Math.min(clock.getDelta(),.05);tryMove(dt);renderer.render(scene,camera)}
+init3D();
+})();
+</script>
+</body>
+</html>
