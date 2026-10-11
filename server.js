@@ -9,7 +9,7 @@ const io = new Server(server, {
   transports: ["websocket", "polling"]
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const players = new Map();
 const MAX_PLAYERS = 16;
 
